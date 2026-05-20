@@ -75,3 +75,5 @@ coverage.xml
 # Local cache folders created by the program
 powder_cache/
 peak_cache/
+results/
+phase_analysis/__pycache__/
