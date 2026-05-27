@@ -77,3 +77,10 @@ powder_cache/
 peak_cache/
 results/
 phase_analysis/__pycache__/
+Instrument.instprm
+my_simulation.bak0.gpx
+.gitignore
+.gitignore
+simulation.gpx
+my_simulation.gpx
+my_simulation.lst

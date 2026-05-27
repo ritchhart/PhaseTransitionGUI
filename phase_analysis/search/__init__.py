@@ -23,4 +23,5 @@ def available_methods() -> list[type[SearchMethod]]:
 
 # Auto-import implementations so they self-register
 from phase_analysis.search import smcr_method      # noqa: F401
+from phase_analysis.search import smcr_method_broaden      # noqa: F401
 from phase_analysis.search import peak_match_method # noqa: F401

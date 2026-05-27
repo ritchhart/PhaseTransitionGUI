@@ -10,7 +10,7 @@ from phase_analysis import HAS_GSASII, G2sc
 
 # ─── Powder simulation ────────────────────────────────────────
 
-def gsas2powdersim(cifpath, outpath, twotheta, instrument_file):
+def gsas2powdersim(cifpath, outpath, twotheta, instrument_file, default_xtal_um=10):
     """
     Simulate powder pattern from CIF using GSASII.
     Produces an .xy file with x-axis matching input two_theta spacing.
@@ -23,7 +23,7 @@ def gsas2powdersim(cifpath, outpath, twotheta, instrument_file):
     savefilename = os.path.join(outpath, filename + ".xy")
 
     phase = gpx.add_phase(phasefile=cifpath, phasename='MyPhase')
-    hist = gpx.add_simulated_powder_histogram(
+    hist = gpx.add_simulated_powder_histogram(  
         histname='Simulation',
         iparams=instrument_file,
         Tmin=np.min(twotheta),
@@ -31,6 +31,9 @@ def gsas2powdersim(cifpath, outpath, twotheta, instrument_file):
         Tstep=(np.max(twotheta) - np.min(twotheta)) / (len(twotheta) - 1),
         phases=[phase],
     )
+
+    gpx.link_histogram_phase(hist, phase)
+    phase.setSampleProfile(hist, 'size', 'isotropic', default_xtal_um)  # 10 μm crystallites
 
     gpx.do_refinements([{}])
     x, y = hist.getdata('X'), hist.getdata('Ycalc')

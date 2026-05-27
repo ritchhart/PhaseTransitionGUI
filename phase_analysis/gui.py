@@ -425,7 +425,7 @@ class TransitionAnalysisGUI:
         instprm_content = f"""#GSAS-II instrument parameter file;
 Type:PXC;Bank:1
 Lam:{wavelength};Zero:0.0;Polariz.:0.7;Azimuth:0.0
-U:2.0;V:-2.0;W:5.0;X:0.0;Y:0.0;Z:0.0;SH/L:0.002
+U:2.0;V:-2.0;W:1.0;X:0.0;Y:0.0;Z:0.0;SH/L:0.002
 """
         outpath = os.path.join(os.getcwd(), 'Instrument.instprm')
         with open(outpath, 'w') as f:
