@@ -329,21 +329,21 @@ class SparseMCR_ALS_broaden:
                 best_c = c_trial.copy()
 
         return best_sigma, best_spec, best_c
-
+        
     def fit_per_segment_binned(self, data, segment_labels,
-                               bin_size=5,
-                               max_components_per_trace=4,
-                               max_components_per_segment=6,
-                               fix_known_spectra=True,
-                               spectral_smoothness=0.5,
-                               align_per_segment=False,
-                               max_shift=50,
-                               max_broaden_sigma=0.0,
-                               broaden_n_steps=11,
-                               broaden_start_iter=3,
-                               broaden_interval=3,
-                               max_iter=100, tol=1e-4,
-                               progress_callback=None):
+                            bin_size=5,
+                            max_components_per_trace=4,
+                            max_components_per_segment=6,
+                            fix_known_spectra=True,
+                            spectral_smoothness=0.5,
+                            align_per_segment=False,
+                            max_shift=50,
+                            max_broaden_sigma=0.0,
+                            broaden_n_steps=11,
+                            broaden_start_iter=3,
+                            broaden_interval=3,
+                            max_iter=100, tol=1e-4,
+                            progress_callback=None):
         """
         Fit MCR-ALS per segment using binned data.
 
@@ -373,6 +373,10 @@ class SparseMCR_ALS_broaden:
         -------
         r2_global : float
         """
+        # Relative threshold for considering a component "active"
+        # Prevents near-zero NNLS artifacts from being counted
+        ACTIVITY_THRESHOLD = 1e-8
+
         unique_segments = np.unique(segment_labels)
         n_segments = len(unique_segments)
         n_times, n_channels = data.shape
@@ -412,8 +416,7 @@ class SparseMCR_ALS_broaden:
                     S_raw_seg, seg_data, max_shift)
 
             fixed_mask = (np.ones(n_comp, dtype=bool) if fix_known_spectra
-                          else np.zeros(n_comp, dtype=bool))
-
+                        else np.zeros(n_comp, dtype=bool))
             C_binned = np.zeros((n_bins, n_comp))
             component_sigmas = np.zeros(n_comp)  # Per-component broadening
             prev_norm = np.inf
@@ -425,10 +428,10 @@ class SparseMCR_ALS_broaden:
                     max_components_per_trace=max_components_per_trace,
                     sparsity_method='iterative_threshold')
 
-                # Segment-level sparsity
+                # Segment-level sparsity enforcement
                 if max_components_per_segment is not None:
                     seg_contributions = np.sum(C_binned, axis=0)
-                    n_active_seg = np.sum(seg_contributions > 0)
+                    n_active_seg = np.sum(seg_contributions > ACTIVITY_THRESHOLD)
                     if n_active_seg > max_components_per_segment:
                         top_k = np.argsort(seg_contributions)[::-1][
                             :max_components_per_segment]
@@ -437,18 +440,31 @@ class SparseMCR_ALS_broaden:
                         C_binned[:, kill_mask] = 0
 
                 # Per-component broadening optimization
-                # Only for fixed components (their spectra are otherwise locked)
-                # Applied after sparsity so we only broaden active components
+                # CRITICAL FIX: Only optimize broadening for components that
+                # survived segment-level sparsity. This prevents killed
+                # components from being resurrected via broadening, which
+                # would violate the max_components_per_segment constraint.
                 if (max_broaden_sigma > 0
                         and iteration >= broaden_start_iter
                         and iteration % broaden_interval == 0):
+
+                    # Determine which components survived sparsity enforcement
+                    surviving_contributions = np.sum(C_binned, axis=0)
+                    surviving_mask = surviving_contributions > ACTIVITY_THRESHOLD
+
                     for i in range(n_comp):
-                        # Only optimize broadening for fixed components
+                        # Only optimize broadening for fixed (known) components
                         if not fixed_mask[i]:
                             continue
-                        # Skip inactive components (but allow reactivation)
-                        # A component might benefit from broadening even if
-                        # currently zero, so we check raw spec validity instead
+
+                        # Skip components killed by segment-level sparsity
+                        # This is the key fix: don't let broadening resurrect
+                        # components that were pruned to enforce the per-segment
+                        # component limit
+                        if not surviving_mask[i]:
+                            continue
+
+                        # Skip components with invalid/empty raw spectra
                         if np.max(S_raw_seg[:, i]) < 1e-10:
                             continue
 
@@ -461,11 +477,27 @@ class SparseMCR_ALS_broaden:
                         C_binned[:, i] = c_i
                         component_sigmas[i] = sigma_i
 
+                    # After broadening optimization, re-enforce segment-level
+                    # sparsity in case broadening changed relative contributions
+                    # enough to alter the ranking
+                    if max_components_per_segment is not None:
+                        seg_contributions = np.sum(C_binned, axis=0)
+                        n_active_seg = np.sum(
+                            seg_contributions > ACTIVITY_THRESHOLD)
+                        if n_active_seg > max_components_per_segment:
+                            top_k = np.argsort(seg_contributions)[::-1][
+                                :max_components_per_segment]
+                            kill_mask = np.ones(n_comp, dtype=bool)
+                            kill_mask[top_k] = False
+                            C_binned[:, kill_mask] = 0
+                            # Zero out broadening for killed components
+                            component_sigmas[kill_mask] = 0.0
+
                 # S step (free components only)
                 S_new = S_seg.copy()
                 free_idx = np.where(~fixed_mask)[0]
-
-                if len(free_idx) > 0 and np.any(C_binned[:, free_idx] > 0):
+                if len(free_idx) > 0 and np.any(
+                        C_binned[:, free_idx] > ACTIVITY_THRESHOLD):
                     if np.any(fixed_mask):
                         data_residual = (
                             binned_data
@@ -475,7 +507,7 @@ class SparseMCR_ALS_broaden:
                         data_residual = binned_data.copy()
 
                     C_free = C_binned[:, free_idx]
-                    active_rows = np.any(C_free > 0, axis=1)
+                    active_rows = np.any(C_free > ACTIVITY_THRESHOLD, axis=1)
                     if np.sum(active_rows) >= 1:
                         for ch in range(n_channels):
                             s_ch, _ = nnls(
@@ -489,7 +521,7 @@ class SparseMCR_ALS_broaden:
                         S_new[:, i] = gaussian_filter1d(
                             S_new[:, i], sigma=spectral_smoothness)
 
-                # Normalize
+                # Normalize (free components only)
                 for i in range(n_comp):
                     s_max = np.max(S_new[:, i])
                     if s_max > 1e-10 and not fixed_mask[i]:
@@ -498,7 +530,7 @@ class SparseMCR_ALS_broaden:
 
                 S_seg = S_new
 
-                # Convergence
+                # Convergence check
                 res = binned_data - C_binned @ S_seg.T
                 res_norm = np.linalg.norm(res)
                 rel_change = abs(prev_norm - res_norm) / (prev_norm + 1e-10)
@@ -506,14 +538,15 @@ class SparseMCR_ALS_broaden:
                     break
                 prev_norm = res_norm
 
-            # Map bins back
+            # Map bins back to full time resolution
             for b in range(n_bins):
                 for t in bin_membership[b]:
                     self.C[t, :] = C_binned[b, :]
 
             self.S_per_segment[seg_idx] = S_seg.copy()
 
-            active_in_seg = np.any(C_binned > 0, axis=0)
+            # Use threshold for determining active components
+            active_in_seg = np.any(C_binned > ACTIVITY_THRESHOLD, axis=0)
             r2_seg = 1 - (res_norm**2) / (
                 np.linalg.norm(binned_data)**2 + 1e-10)
 

@@ -148,6 +148,7 @@ class SparseMCR_ALS:
 
             if sparsity_method == 'hard_threshold':
                 c, _ = nnls(S, target)
+                c[c < 1e-10 * np.max(c)] = 0
                 if (max_components_per_trace is not None
                         and np.sum(c > 0) > max_components_per_trace):
                     sorted_idx = np.argsort(c)[::-1]
@@ -162,6 +163,7 @@ class SparseMCR_ALS:
             elif sparsity_method == 'iterative_threshold':
                 active = np.ones(n_comp, dtype=bool)
                 c, _ = nnls(S, target)
+                c[c < 1e-10 * np.max(c)] = 0
                 while (max_components_per_trace is not None
                        and np.sum(c > 0) > max_components_per_trace):
                     contributions = c * np.max(S, axis=0)
@@ -180,6 +182,7 @@ class SparseMCR_ALS:
 
             elif sparsity_method == 'l1':
                 c, _ = nnls(S, target)
+                c[c < 1e-10 * np.max(c)] = 0
                 threshold = l1_alpha * np.max(c)
                 c[c < threshold] = 0
                 surviving = c > 0
@@ -371,7 +374,9 @@ class SparseMCR_ALS:
                     self.C[t, :] = C_binned[b, :]
 
             self.S_per_segment[seg_idx] = S_seg.copy()
-            active_in_seg = np.any(C_binned > 0, axis=0)
+
+            ACTIVITY_THRESHOLD = 1e-6
+            active_in_seg = np.any(C_binned > ACTIVITY_THRESHOLD * np.max(C_binned), axis=0)
             r2_seg = 1 - (res_norm**2) / (
                 np.linalg.norm(binned_data)**2 + 1e-10)
 

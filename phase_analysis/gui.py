@@ -703,7 +703,8 @@ U:2.0;V:-2.0;W:1.0;X:0.0;Y:0.0;Z:0.0;SH/L:0.002
             self.status_var.set(result.summary)
 
         results_win = ResultsWindow(self.root, result.method_name)
-        result.plot(results_win.fig, transitions=self.transitions)
+        file_name = self.data_folder_name or "unknown_data"
+        result.plot(results_win.fig, transitions=self.transitions, file_name = file_name)
         results_win.canvas.draw()
         results_win.status_var.set(result.summary)
 

@@ -1,4 +1,5 @@
 """Sparse MCR-ALS search method."""
+import os
 import numpy as np
 from matplotlib.figure import Figure
 from matplotlib.gridspec import GridSpec
@@ -8,11 +9,11 @@ from phase_analysis.search.base import SearchMethod, SearchResult, Parameter
 from phase_analysis.cache import CandidateCache
 from phase_analysis.pipeline.alignment import prepare_references_for_mcr
 from phase_analysis.search._smcr_solver_broaden import SparseMCR_ALS_broaden
+ACTIVITY_THRESHOLD = 1e-6
 
 
 class SMCRResultBroaden(SearchResult):
     """SMCR-specific result with custom plotting and serialization."""
-
     def to_dict(self) -> dict:
         d = super().to_dict()
         smcr = self.raw.get('smcr_object')
@@ -47,7 +48,7 @@ class SMCRResultBroaden(SearchResult):
                 seg_details[int(seg_idx)] = detail
             d['segments'] = seg_details
             if smcr.C is not None:
-                active_mask = np.any(smcr.C > 0, axis=0)
+                active_mask = np.any(smcr.C > ACTIVITY_THRESHOLD * np.max(smcr.C), axis=0)
                 d['mean_concentrations'] = {
                     smcr.candidate_names[i]: float(np.mean(smcr.C[:, i]))
                     for i in range(len(smcr.candidate_names))
@@ -64,7 +65,7 @@ class SMCRResultBroaden(SearchResult):
         transitions = transitions or []
 
         unique_segments = np.unique(segment_labels)
-        active_mask = np.any(smcr.C > 0, axis=0)
+        active_mask = np.any(smcr.C > ACTIVITY_THRESHOLD * np.max(smcr.C), axis=0)
         active_idx = np.where(active_mask)[0]
         active_names = [smcr.candidate_names[i] for i in active_idx]
         n_active = len(active_idx)
@@ -75,43 +76,36 @@ class SMCRResultBroaden(SearchResult):
                     ha='center', va='center', fontsize=14)
             return
 
-        # Count how many segment decomposition plots we need
         valid_segments = [s for s in unique_segments if s in smcr.segment_results]
         n_seg_plots = len(valid_segments)
 
-        # Layout: top 3 overview rows spanning full width,
-        # then segment decomposition plots arranged in a grid below
-        n_cols_seg = min(n_seg_plots, 3)
-        n_rows_seg = int(np.ceil(n_seg_plots / n_cols_seg)) if n_seg_plots > 0 else 0
-
-        # Build a consistent color map: component index -> color
-        # So the same component always has the same color across segments
-        n_comp = smcr.S.shape[1] if smcr.S is not None else self.raw.get('n_comp', 10)
+        # Build a consistent color map
         comp_colors = {i: cm.tab10(k / max(n_active, 1))
                        for k, i in enumerate(active_idx)}
 
-        gs = GridSpec(3 + n_rows_seg, n_cols_seg, figure=fig,
-                      height_ratios=[4, 1.2, 1.8] + [3] * n_rows_seg,
-                      hspace=0.55, wspace=0.35)
+        # --- Main figure: Activity map, R² bar, Residual heatmap only ---
+        gs = GridSpec(3, 1, figure=fig,
+                      height_ratios=[4, 1.2, 1.8],
+                      hspace=0.55)
 
-        # --- Activity map (spans all columns) ---
-        ax1 = fig.add_subplot(gs[0, :])
+        # --- Activity map ---
+        ax1 = fig.add_subplot(gs[0, 0])
         for seg_idx in unique_segments:
             if seg_idx not in smcr.segment_results:
                 continue
             seg_res = smcr.segment_results[seg_idx]
             seg_mask = segment_labels == seg_idx
             seg_times = np.where(seg_mask)[0]
-            t_start, t_end = seg_times[0], seg_times[-1]
             for y_pos, comp_i in enumerate(active_idx):
-                if comp_i in seg_res['active_components']:
-                    mean_c = np.mean(smcr.C[seg_mask, comp_i])
-                    max_c = np.max(smcr.C[:, comp_i]) + 1e-10
-                    alpha = 0.3 + 0.7 * (mean_c / max_c)
-                    ax1.barh(y_pos, t_end - t_start, left=t_start,
-                             height=0.8, alpha=alpha, color=comp_colors[comp_i],
-                             edgecolor=comp_colors[comp_i], linewidth=0.5)
-
+                bin_membership = seg_res['bin_membership']
+                C_binned = seg_res['C_binned']
+                for b, times in enumerate(bin_membership):
+                    if C_binned[b, comp_i] > 1e-8:
+                        max_c = np.max(smcr.C[:, comp_i]) + 1e-10
+                        alpha = 0.3 + 0.7 * (C_binned[b, comp_i] / max_c)
+                        ax1.barh(y_pos, times[-1] - times[0], left=times[0],
+                                height=0.8, alpha=alpha, color=comp_colors[comp_i],
+                                edgecolor='none', linewidth=0)
         ax1.set_yticks(range(n_active))
         ax1.set_yticklabels(active_names, fontsize=9)
         ax1.set_xlabel('Time step')
@@ -120,8 +114,8 @@ class SMCRResultBroaden(SearchResult):
         for tr in transitions:
             ax1.axvline(tr, color='gray', alpha=0.6, linestyle='--', lw=0.8)
 
-        # --- R² per segment (spans all columns) ---
-        ax2 = fig.add_subplot(gs[1, :])
+        # --- R² per segment ---
+        ax2 = fig.add_subplot(gs[1, 0])
         for seg_idx in unique_segments:
             if seg_idx not in smcr.segment_results:
                 continue
@@ -131,15 +125,14 @@ class SMCRResultBroaden(SearchResult):
             center = (seg_times[0] + seg_times[-1]) / 2
             width = seg_times[-1] - seg_times[0]
             ax2.bar(center, r2, width=width, alpha=0.6, color='steelblue')
-
         ax2.set_ylabel('R²')
         ax2.set_xlabel('Time step')
         ax2.set_xlim(0, data.shape[0])
         ax2.axhline(0.95, color='green', linestyle=':', alpha=0.5)
         ax2.axhline(0.90, color='orange', linestyle=':', alpha=0.5)
 
-        # --- Residual heatmap (spans all columns) ---
-        ax3 = fig.add_subplot(gs[2, :])
+        # --- Residual heatmap ---
+        ax3 = fig.add_subplot(gs[2, 0])
         res_vmax = np.percentile(np.abs(smcr.residuals), 97)
         ax3.imshow(smcr.residuals.T, aspect='auto', cmap='RdBu_r',
                    vmin=-res_vmax, vmax=res_vmax,
@@ -148,88 +141,90 @@ class SMCRResultBroaden(SearchResult):
         ax3.set_xlabel('Time step')
         ax3.set_ylabel('2θ (°)')
 
-        # --- Per-segment spectral decomposition at middle bin ---
-        for plot_idx, seg_idx in enumerate(valid_segments):
-            seg_res = smcr.segment_results[seg_idx]
-
-            row = 3 + plot_idx // n_cols_seg
-            col = plot_idx % n_cols_seg
-            ax = fig.add_subplot(gs[row, col])
-
-            binned_data = seg_res['binned_data']
-            C_binned = seg_res['C_binned']
-            S_seg = seg_res['S']
-            n_bins = binned_data.shape[0]
-            mid_bin = n_bins // 2
-
-            observed = binned_data[mid_bin, :]
-            concentrations = C_binned[mid_bin, :]
-
-            # Get per-component sigmas for labeling
-            comp_sigmas = seg_res.get('component_broaden_sigmas')
-
-            # Plot each component's contribution as a shaded fill
-            total_fit = np.zeros_like(observed)
-            for comp_i in active_idx:
-                contribution = concentrations[comp_i] * S_seg[:, comp_i]
-                total_fit += contribution
-
-                if np.max(np.abs(contribution)) < 1e-10:
-                    continue
-
-                # Build label: name + broadening info
-                label = smcr.candidate_names[comp_i]
-                if comp_sigmas is not None and comp_i < len(comp_sigmas):
-                    sigma_val = comp_sigmas[comp_i]
-                    if sigma_val > 0:
-                        label += f' (σ={sigma_val:.1f})'
-
-                color = comp_colors[comp_i]
-                ax.fill_between(two_theta, 0, contribution,
-                                alpha=0.35, color=color, linewidth=0)
-                ax.plot(two_theta, contribution, color=color,
-                        lw=0.7, alpha=0.8, label=label)
-
-            # Plot observed data
-            ax.plot(two_theta, observed, 'k-', lw=1.0, label='Observed')
-
-            # Plot total fit
-            ax.plot(two_theta, total_fit, color='red', lw=1.0,
-                    ls='-', label='Total fit')
-
-            # Plot residual (offset below zero for clarity)
-            residual = observed - total_fit
-            # Small offset so residual doesn't overlap with components
-            res_offset = -np.max(observed) * 0.05
-            ax.plot(two_theta, residual + res_offset, color='gray',
-                    lw=0.6, ls='-', label='Residual')
-            ax.axhline(res_offset, color='gray', lw=0.3, ls=':')
-
-            ax.set_xlabel('2θ (°)', fontsize=8)
-            ax.set_ylabel('Intensity', fontsize=8)
-            ax.tick_params(labelsize=7)
-
-            r2_seg = seg_res['r2']
-            ax.set_title(f'Seg {int(seg_idx)} · bin {mid_bin+1}/{n_bins} · '
-                         f'R²={r2_seg:.3f}', fontsize=9)
-
-            # Legend: only show if not too many components
-            n_active_in_seg = len(seg_res['active_components'])
-            if n_active_in_seg <= 6:
-                ax.legend(fontsize=6, loc='upper right', framealpha=0.7,
-                          handlelength=1.2, labelspacing=0.3)
-
-            ax.set_xlim(two_theta[0], two_theta[-1])
-            y_max = max(np.max(observed), np.max(total_fit)) * 1.1
-            y_min = min(res_offset + np.min(residual), 0) * 1.2
-            ax.set_ylim(y_min, y_max)
-
         fig.tight_layout()
+
+        # --- Component decomposition: separate figure, single column, 4:1 aspect ---
+        if n_seg_plots > 0:
+            fig_width = 12.0  # inches
+            subplot_height = fig_width / 4.0  # 4:1 aspect ratio
+            total_height = subplot_height * n_seg_plots + 0.5 * (n_seg_plots - 1)
+
+            comp_fig = Figure(figsize=(fig_width, total_height), dpi=150)
+            comp_gs = GridSpec(n_seg_plots, 1, figure=comp_fig,
+                               hspace=0.4)
+
+            for plot_idx, seg_idx in enumerate(valid_segments):
+                seg_res = smcr.segment_results[seg_idx]
+                ax = comp_fig.add_subplot(comp_gs[plot_idx, 0])
+
+                binned_data = seg_res['binned_data']
+                C_binned = seg_res['C_binned']
+                S_seg = seg_res['S']
+                n_bins = binned_data.shape[0]
+                mid_bin = n_bins // 2
+                observed = binned_data[mid_bin, :]
+                concentrations = C_binned[mid_bin, :]
+
+                comp_sigmas = seg_res.get('component_broaden_sigmas')
+
+                total_fit = np.zeros_like(observed)
+                for comp_i in active_idx:
+                    contribution = concentrations[comp_i] * S_seg[:, comp_i]
+                    total_fit += contribution
+                    if np.max(np.abs(contribution)) < 1e-10:
+                        continue
+                    label = smcr.candidate_names[comp_i]
+                    if comp_sigmas is not None and comp_i < len(comp_sigmas):
+                        sigma_val = comp_sigmas[comp_i]
+                        if sigma_val > 0:
+                            label += f' (σ={sigma_val:.1f})'
+                    color = comp_colors[comp_i]
+                    ax.fill_between(two_theta, 0, contribution,
+                                    alpha=0.35, color=color, linewidth=0)
+                    ax.plot(two_theta, contribution, color=color,
+                            lw=0.7, alpha=0.8, label=label)
+
+                ax.plot(two_theta, observed, 'k-', lw=1.0, label='Observed')
+                ax.plot(two_theta, total_fit, color='red', lw=1.0,
+                        ls='-', label='Total fit')
+
+                residual = observed - total_fit
+                res_offset = -np.max(observed) * 0.05
+                ax.plot(two_theta, residual + res_offset, color='gray',
+                        lw=0.6, ls='-', label='Residual')
+                ax.axhline(res_offset, color='gray', lw=0.3, ls=':')
+
+                ax.set_xlabel('2θ (°)', fontsize=10)
+                ax.set_ylabel('Intensity', fontsize=10)
+                ax.tick_params(labelsize=9)
+                r2_seg = seg_res['r2']
+                ax.set_title(f'Segment {int(seg_idx)} · bin {mid_bin+1}/{n_bins} · '
+                             f'R²={r2_seg:.3f}', fontsize=11)
+
+                n_active_in_seg = len(seg_res['active_components'])
+                if n_active_in_seg <= 8:
+                    ax.legend(fontsize=8, loc='upper right', framealpha=0.7,
+                              handlelength=1.2, labelspacing=0.3)
+                ax.set_xlim(two_theta[0], two_theta[-1])
+                y_max = max(np.max(observed), np.max(total_fit)) * 1.1
+                y_min = min(res_offset + np.min(residual), 0) * 1.2
+                ax.set_ylim(y_min, y_max)
+
+            comp_fig.tight_layout()
+
+            # Save to components folder (cross-platform)
+            resutls_dir = os.path.join(os.getcwd(), 'results')
+            os.makedirs(resutls_dir, exist_ok=True)
+            components_dir = os.path.join(resutls_dir, 'components')
+            os.makedirs(components_dir, exist_ok=True)
+            file_name = kwargs.get('file_name', 'component_decomposition')
+            output_path = os.path.join(components_dir, file_name + '.jpg')
+            comp_fig.savefig(output_path, format='jpg', dpi=300,
+                             bbox_inches='tight', pil_kwargs={'quality': 92})
 
 
 @register
 class SMCRSearchBroaden(SearchMethod):
-
     @property
     def name(self):
         return "smcrbroaden"
@@ -253,7 +248,7 @@ class SMCRSearchBroaden(SearchMethod):
             Parameter('max_comp_segment', 'Max components/segment', int, 6, 1, 30),
             Parameter('broaden_sigma', 'Initial broaden σ (ch)', float, 2.0, 0, 10, 0.5,
                       tooltip="Global broadening applied during reference preparation."),
-            Parameter('max_broaden_sigma', 'Per-component max σ (ch)', float, 3.0, 0, 10, 0.5,
+            Parameter('max_broaden_sigma', 'Per-component max σ (ch)', float, 7.0, 0, 10, 0.5,
                       tooltip="Maximum additional per-component broadening optimized during fit. "
                               "Each reference spectrum independently gets 0 to this value. "
                               "Set to 0 to disable."),
@@ -266,7 +261,6 @@ class SMCRSearchBroaden(SearchMethod):
 
     def run(self, data, two_theta, segment_labels, cache, params,
             progress_callback=None):
-
         profiles = list(cache.powder_profiles.values())
         names = list(cache.powder_profiles.keys())
         max_shift = params['max_shift']
@@ -320,9 +314,14 @@ class SMCRSearchBroaden(SearchMethod):
             max_iter=100, tol=1e-4,
             progress_callback=_fit_progress)
 
-        active_mask = np.any(smcr.C > 0, axis=0)
+        active_mask = np.any(smcr.C > ACTIVITY_THRESHOLD * np.max(smcr.C), axis=0)
         active_names = [smcr.candidate_names[i]
                         for i in np.where(active_mask)[0]]
+
+        max_per_seg = max(
+            len(seg_res['active_components'])
+            for seg_res in smcr.segment_results.values()
+        ) if smcr.segment_results else 0
 
         return SMCRResultBroaden(
             method_name=self.display_name,

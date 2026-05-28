@@ -214,10 +214,14 @@ class SMCRSearch(SearchMethod):
         active_mask = np.any(smcr.C > 0, axis=0)
         active_names = [smcr.candidate_names[i]
                         for i in np.where(active_mask)[0]]
-
+        max_per_seg = max(
+            len(seg_res['active_components'])
+            for seg_res in smcr.segment_results.values()
+        )
         return SMCRResult(
             method_name=self.display_name,
-            summary=f"{len(active_names)} active phases, Global R² = {r2:.5f}",
+            summary=(f"{len(active_names)} total phases ({max_per_seg} max/segment), "
+             f"Global R² = {r2:.5f}"),
             phases_found=active_names,
             confidence={name: float(np.mean(smcr.C[:, i]))
                         for i, name in enumerate(smcr.candidate_names)
