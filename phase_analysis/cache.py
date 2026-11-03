@@ -65,10 +65,14 @@ class CacheManager:
     The GUI talks to this; search methods only see CandidateCache.
     """
 
-    def __init__(self, working_dir: Optional[str] = None):
+    def __init__(self, working_dir: Optional[str] = None,
+                 powder_folder: Optional[str] = None,
+                 peak_folder: Optional[str] = None):
         self.working_dir = working_dir or os.getcwd()
-        self._powder_folder = os.path.join(self.working_dir, 'powder_cache')
-        self._peak_folder = os.path.join(self.working_dir, 'peak_cache')
+        self._powder_folder = powder_folder or os.path.join(
+            self.working_dir, 'powder_cache')
+        self._peak_folder = peak_folder or os.path.join(
+            self.working_dir, 'peak_cache')
 
     @property
     def powder_folder(self):

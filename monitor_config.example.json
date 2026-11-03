@@ -1,0 +1,26 @@
+{
+  "data_folder": "/Users/ritc302/Downloads/A2_manual_850C_d1000/A2_manual_850C_d1000/xye",
+  "output_html": "./monitor_output/live_report.html",
+  "title": "A2 850C d1000 — live monitor",
+
+  "pattern_folder": "/Users/ritc302/Library/CloudStorage/OneDrive-PNNL/Jupyter/WAXS/KnownPatterns",
+  "powder_subfolder": "CalculatedPowders_gsas",
+  "peak_subfolder": "peaks",
+
+  "bg_lambda": 4,
+  "threshold_percentile": 90,
+  "segmentation_weights": {
+    "dissimilarity": 1.0,
+    "intensity_change": 1.0,
+    "channel_change": 1.0,
+    "rank_change": 1.0
+  },
+
+  "search_method": "smcr",
+  "search_params": {},
+  "candidate_filter": [],
+
+  "poll_interval_seconds": 5,
+  "quiet_seconds": 15,
+  "html_refresh_seconds": 30
+}

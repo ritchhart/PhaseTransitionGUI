@@ -1,0 +1,4 @@
+# Optional. See the note in requirements.txt — only needed to simulate
+# powder patterns / peak lists from CIFs, or for GSAS-II's background fit.
+# From GitHub (main branch)
+git+https://github.com/AdvancedPhotonSource/GSAS-II.git
