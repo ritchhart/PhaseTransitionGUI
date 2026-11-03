@@ -3,5 +3,14 @@ mip==1.17.6
 numpy==2.4.6
 scipy==1.17.1
 six==1.16.0
-# From GitHub (main branch)
-git+https://github.com/AdvancedPhotonSource/GSAS-II.git
+
+# GSAS-II is optional. The GUI and the live monitor both run without it
+# (falling back to a simpler background-subtraction routine) and still
+# support every search method as long as a pre-built pattern library
+# (powder_cache / peak_cache, or an equivalent folder — see README) is
+# available. GSAS-II is only needed to *generate* that library from CIFs,
+# or to use its background-subtraction routine instead of the fallback.
+#
+# It's a heavy, slow-to-install dependency (full crystallography suite),
+# so it's kept out of this file. Install it separately if you need it:
+#   pip install -r requirements-gsas.txt

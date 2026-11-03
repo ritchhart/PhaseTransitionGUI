@@ -77,6 +77,11 @@ powder_cache/
 peak_cache/
 results/
 phase_analysis/__pycache__/
+
+# Live monitor output + machine-specific config (paths are local to each
+# machine — keep monitor_config.example.json tracked as a template instead)
+monitor_output/
+monitor_config.json
 Instrument.instprm
 my_simulation.bak0.gpx
 .gitignore
